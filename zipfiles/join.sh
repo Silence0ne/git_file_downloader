@@ -2,8 +2,8 @@
 # Join script for: BASENAME.EXT
 # Usage: bash join.sh
 
-BASENAME="webmin_2.630_all"
-EXT="deb"
+BASENAME="KeePassXC-2.7.12-Win64-LegacyWindows"
+EXT="zip"
 
 echo "🔗 Joining chunks..."
 cat "${BASENAME}.part_"* > "${BASENAME}.${EXT}"
