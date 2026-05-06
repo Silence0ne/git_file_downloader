@@ -1,5 +1,4 @@
-name: Download by Type (zip/apt) and Commit
-
+name: Download by Type (zip/apt/apk) and Commit
 on:
   workflow_dispatch:
     inputs:
@@ -14,6 +13,7 @@ on:
         options:
           - zip
           - apt
+          - apk
         default: zip
 
 permissions:
@@ -22,13 +22,13 @@ permissions:
 jobs:
   download:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 1
+          ref: ${{ github.ref }}           # ← این خط رو اضافه کنید
+          fetch-depth: 0                   # ← برای داشتن تاریخچه کامل
 
       - name: Prepare paths
         id: prep
@@ -36,15 +36,22 @@ jobs:
           URL="${{ github.event.inputs.file_url }}"
           TYPE="${{ github.event.inputs.file_type }}"
           NAME=$(basename "$URL")
-
-          if [ "$TYPE" = "zip" ]; then
-            DIR="zipfiles"
-          else
-            DIR="aptfiles"
-          fi
-
+          case "$TYPE" in
+            zip)
+              DIR="zipfiles"
+              ;;
+            apt)
+              DIR="aptfiles"
+              ;;
+            apk)
+              DIR="apkfiles"
+              ;;
+            *)
+              echo "❌ نوع فایل ناشناس"
+              exit 1
+              ;;
+          esac
           mkdir -p "$DIR"
-          
           echo "FILENAME=$NAME" >> $GITHUB_OUTPUT
           echo "OUTDIR=$DIR" >> $GITHUB_OUTPUT
           echo "FULLPATH=$DIR/$NAME" >> $GITHUB_OUTPUT
@@ -53,44 +60,22 @@ jobs:
         run: |
           URL="${{ github.event.inputs.file_url }}"
           OUT="${{ steps.prep.outputs.FULLPATH }}"
-
           echo "Downloading: $URL"
           curl -L "$URL" -o "$OUT"
-
           echo "Saved to $OUT"
 
       - name: Commit & Push
         run: |
           echo "📦 Preparing commit and push..."
-
           git config user.name "github-actions[bot]"
           git config user.email "bot@github.com"
-
-          echo "📁 Adding all changed files..."
           git add -A
-
+          
           CHANGES=$(git diff --cached --name-only | wc -l)
-
           if [ "$CHANGES" -eq 0 ]; then
             echo "❌ No new changes"
             exit 0
           fi
-
-          echo "📝 Committing..."
-          git commit -m "Added new ${{ github.event.inputs.file_type }}: ${{ steps.prep.outputs.FILENAME }}" --quiet
-
-          echo "🚀 Pushing changes..."
-          # Robust push (same technique from YouTube Downloader)
-          for i in 1 2 3 4 5; do
-            echo -n "Attempt $i/5..."
-            if git pull --rebase --quiet 2>/dev/null && git push --quiet 2>/dev/null; then
-              echo " Success!"
-              exit 0
-            fi
-            echo " Failed."
-            git rebase --abort 2>/dev/null
-            [ $i -lt 5 ] && sleep $((i*3))
-          done
-
-          echo "❌ Push failed after several attempts"
-          exit 1
+          
+          git commit -m "Added new ${{ github.event.inputs.file_type }}: ${{ steps.prep.outputs.FILENAME }}"
+          git push
