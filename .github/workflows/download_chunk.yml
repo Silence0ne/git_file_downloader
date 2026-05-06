@@ -1,0 +1,140 @@
+name: Download, Split & Commit
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "🔗 لینک فایل"
+        required: true
+        type: string
+      file_type:
+        description: "📦 نوع فایل"
+        required: true
+        type: choice
+        options:
+          - zip
+          - apt
+          - apk
+        default: zip
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Prepare paths
+        id: prep
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          TYPE="${{ github.event.inputs.file_type }}"
+          NAME=$(basename "$URL")
+          EXT="${NAME##*.}"
+          BASENAME="${NAME%.*}"
+          
+          case "$TYPE" in
+            zip)
+              DIR="zipfiles"
+              ;;
+            apt)
+              DIR="aptfiles"
+              ;;
+            apk)
+              DIR="apkfiles"
+              ;;
+          esac
+          mkdir -p "$DIR"
+          
+          echo "NAME=$NAME" >> $GITHUB_OUTPUT
+          echo "BASENAME=$BASENAME" >> $GITHUB_OUTPUT
+          echo "EXT=$EXT" >> $GITHUB_OUTPUT
+          echo "DIR=$DIR" >> $GITHUB_OUTPUT
+
+      - name: Download file
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          NAME="${{ steps.prep.outputs.NAME }}"
+          echo "📥 Downloading: $URL"
+          curl -L "$URL" -o "$NAME"
+          echo "✅ Downloaded: $NAME"
+          
+          SIZE=$(stat -c%s "$NAME")
+          echo "📊 File size: $((SIZE / 1024 / 1024)) MB"
+
+      - name: Split file into chunks
+        id: split
+        run: |
+          NAME="${{ steps.prep.outputs.NAME }}"
+          BASENAME="${{ steps.prep.outputs.BASENAME }}"
+          DIR="${{ steps.prep.outputs.DIR }}"
+          EXT="${{ steps.prep.outputs.EXT }}"
+          
+          # Split into 90MB chunks (safe margin under 100MB)
+          split -b 90M "$NAME" "${DIR}/${BASENAME}.part_"
+          
+          # List chunks
+          echo "📦 Created chunks:"
+          ls -lh "${DIR}/"
+          
+          # Count chunks
+          CHUNKS=$(ls "${DIR}/${BASENAME}.part_"* | wc -l)
+          echo "CHUNKS=$CHUNKS" >> $GITHUB_OUTPUT
+          echo "BASENAME=$BASENAME" >> $GITHUB_OUTPUT
+
+      - name: Create join script
+        run: |
+          DIR="${{ steps.prep.outputs.DIR }}"
+          BASENAME="${{ steps.prep.outputs.BASENAME }}"
+          EXT="${{ steps.prep.outputs.EXT }}"
+          
+          # Create a script to join the file
+          cat > "${DIR}/join.sh" << 'EOF'
+          #!/bin/bash
+          # Join script for: BASENAME.EXT
+          # Usage: bash join.sh
+          
+          BASENAME="BASENAME_PLACEHOLDER"
+          EXT="EXT_PLACEHOLDER"
+          
+          echo "🔗 Joining chunks..."
+          cat "${BASENAME}.part_"* > "${BASENAME}.${EXT}"
+          
+          # Verify
+          if [ -f "${BASENAME}.${EXT}" ]; then
+            echo "✅ File joined successfully!"
+            ls -lh "${BASENAME}.${EXT}"
+          else
+            echo "❌ Failed to join file"
+            exit 1
+          fi
+          EOF
+          
+          # Replace placeholders
+          sed -i "s/BASENAME_PLACEHOLDER/$BASENAME/g" "${DIR}/join.sh"
+          sed -i "s/EXT_PLACEHOLDER/$EXT/g" "${DIR}/join.sh"
+          
+          chmod +x "${DIR}/join.sh"
+          echo "📜 Join script created"
+
+      - name: Commit & Push
+        run: |
+          echo "📦 Preparing commit and push..."
+          git config user.name "github-actions[bot]"
+          git config user.email "bot@github.com"
+          git add -A
+          
+          CHANGES=$(git diff --cached --name-only | wc -l)
+          if [ "$CHANGES" -eq 0 ]; then
+            echo "❌ No new changes"
+            exit 0
+          fi
+          
+          git commit -m "Added new ${{ github.event.inputs.file_type }}: ${{ steps.prep.outputs.BASENAME }} (split into ${{ steps.split.outputs.CHUNKS }} chunks)"
+          git push
