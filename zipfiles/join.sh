@@ -2,7 +2,7 @@
 # Join script for: BASENAME.EXT
 # Usage: bash join.sh
 
-BASENAME="KeePassXC-2.7.12-Win64-LegacyWindows"
+BASENAME="KeePassXC-2.7.12-Win64"
 EXT="zip"
 
 echo "🔗 Joining chunks..."
