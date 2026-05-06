@@ -1,0 +1,91 @@
+name: Download by Type (zip/apt/apk) and Commit
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: "🔗 لینک فایل"
+        required: true
+        type: string
+      file_type:
+        description: "📦 نوع فایل"
+        required: true
+        type: choice
+        options:
+          - zip
+          - apt
+          - apk
+        default: zip
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Git LFS
+        run: |
+          git lfs install
+          # Track large file extensions
+          git lfs track "*.apk"
+          git lfs track "*.zip"
+          git lfs track "*.apt"
+          # Save .gitattributes if it doesn't exist
+          git add .gitattributes 2>/dev/null || true
+
+      - name: Prepare paths
+        id: prep
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          TYPE="${{ github.event.inputs.file_type }}"
+          NAME=$(basename "$URL")
+          case "$TYPE" in
+            zip)
+              DIR="zipfiles"
+              ;;
+            apt)
+              DIR="aptfiles"
+              ;;
+            apk)
+              DIR="apkfiles"
+              ;;
+            *)
+              echo "❌ نوع فایل ناشناس"
+              exit 1
+              ;;
+          esac
+          mkdir -p "$DIR"
+          echo "FILENAME=$NAME" >> $GITHUB_OUTPUT
+          echo "OUTDIR=$DIR" >> $GITHUB_OUTPUT
+          echo "FULLPATH=$DIR/$NAME" >> $GITHUB_OUTPUT
+
+      - name: Download file
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          OUT="${{ steps.prep.outputs.FULLPATH }}"
+          echo "Downloading: $URL"
+          curl -L "$URL" -o "$OUT"
+          echo "Saved to $OUT"
+
+      - name: Commit & Push
+        run: |
+          echo "📦 Preparing commit and push..."
+          git config user.name "github-actions[bot]"
+          git config user.email "bot@github.com"
+          git add -A
+          
+          CHANGES=$(git diff --cached --name-only | wc -l)
+          if [ "$CHANGES" -eq 0 ]; then
+            echo "❌ No new changes"
+            exit 0
+          fi
+          
+          git commit -m "Added new ${{ github.event.inputs.file_type }}: ${{ steps.prep.outputs.FILENAME }}"
+          git push
